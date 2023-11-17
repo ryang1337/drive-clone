@@ -46,7 +46,7 @@ DEBUG_INDEX = {
         file_type="directory",
         name="folder1",
         parent="0",
-        children="3"
+        children="3,4"
     ),
     "2": INode(
         id="2",
@@ -64,7 +64,7 @@ DEBUG_INDEX = {
     ),
     "4": INode(
         id="4",
-        file_type="folder",
+        file_type="directory",
         name="folder3",
         parent="1",
         children=""
@@ -172,6 +172,7 @@ def create_directory(obj: INodeCreationObject):
 
 @app.post("/api/uploadfile")
 def upload_file(file: UploadFile, curr_id: Annotated[str, Form()]):
+
     if file.filename == None:
         print(f"Attempted to upload invalid file in directory {curr_id}")
         raise HTTPException(status_code=400, detail="Invalid file.")
@@ -180,6 +181,9 @@ def upload_file(file: UploadFile, curr_id: Annotated[str, Form()]):
         file_type="file",
         filename=file.filename,
         parent_id=curr_id)
+    if DEBUG:
+        # DEBUG_INDEX[inode.id] = inode
+        return inode
     s3_bucket.upload_fileobj(file.file, inode.id)
 
 # @app.post("/api/uploaddirectory")
@@ -192,6 +196,8 @@ def delete_inode(inode_id: str):
     if DEBUG:
         inode = DEBUG_INDEX[inode_id]
         parent = DEBUG_INDEX[inode.parent]
+        DEBUG_INDEX[inode.id].parent = "";
+        DEBUG_INDEX[parent.id].RemoveChild(inode.id);
 
         return
 
