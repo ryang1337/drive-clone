@@ -10,3 +10,7 @@ class INodeMoveObject(BaseModel):
 
 class INodeDeletionObject(BaseModel):
     target_inode_id: str
+
+class INodeRenameObject(BaseModel):
+    inode_id: str
+    new_inode_name: str

@@ -1,11 +1,10 @@
-from api_objects import INodeCreationObject, INodeMoveObject, INodeDeletionObject
+from api_objects import INodeCreationObject, INodeMoveObject, INodeDeletionObject, INodeRenameObject
 
 from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from inode import INode
 from typing import Annotated
 from dotenv import load_dotenv
-from uuid import uuid4
 
 import boto3
 import os
@@ -79,6 +78,21 @@ dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 # creates a new inode if id is not specified, otherwise it will update
 # the dynamodb entry with the given id
 def put_inode(file_type="", filename="", parent_id="", inode=None):
+    if DEBUG:
+        if inode == None:
+            inode = INode(
+                file_type=file_type,
+                name=filename,
+                parent=parent_id,
+            )
+            DEBUG_INDEX[inode.id] = inode
+        else:
+            DEBUG_INDEX[inode.id].file_type = inode.file_type
+            DEBUG_INDEX[inode.id].name = inode.name
+            DEBUG_INDEX[inode.id].parent = inode.parent
+
+        return DEBUG_INDEX[inode.id]
+
     if inode == None:
         inode = INode(
             file_type=file_type,
@@ -164,11 +178,20 @@ def read_directory(directory_id: str):
 
 @app.post("/api/createdirectory")
 def create_directory(obj: INodeCreationObject):
-    return put_inode(
+    child_inode = put_inode(
         file_type="directory",
         filename=obj.created_inode_name,
         parent_id=obj.target_inode_id
     )
+
+    parent_inode = get_inode(obj.target_inode_id)
+    parent_inode.AddChild(child_inode.id)
+    put_inode(inode=parent_inode)
+
+    print(DEBUG_INDEX[parent_inode.id])
+    print(DEBUG_INDEX[child_inode.id])
+
+    return child_inode
 
 @app.post("/api/uploadfile")
 def upload_file(file: UploadFile, curr_id: Annotated[str, Form()]):
@@ -182,9 +205,26 @@ def upload_file(file: UploadFile, curr_id: Annotated[str, Form()]):
         filename=file.filename,
         parent_id=curr_id)
     if DEBUG:
-        # DEBUG_INDEX[inode.id] = inode
+        DEBUG_INDEX[inode.id] = inode
+        DEBUG_INDEX[curr_id].AddChild(inode.id)
         return inode
     s3_bucket.upload_fileobj(file.file, inode.id)
+
+@app.post("/api/renameinode")
+def rename_inode(obj: INodeRenameObject):
+    if DEBUG:
+        inode = DEBUG_INDEX[obj.inode_id]
+        inode.name = obj.new_inode_name
+        return
+
+    try:
+        inode = get_inode(obj.inode_id)
+    except HTTPException:
+        raise
+
+    inode.name = obj.new_inode_name
+    
+    put_inode(inode=inode)
 
 # @app.post("/api/uploaddirectory")
 # def upload_directory(file: UploadFile, curr_id: Annotated[str, Form()]):

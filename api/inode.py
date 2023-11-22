@@ -1,8 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import uuid4
 
+def strUUID4():
+    return str(uuid4())
+
 class INode(BaseModel):
-    id: str = str(uuid4())
+    id: str = Field(default_factory=strUUID4)
     file_type: str
     name: str
     parent: str

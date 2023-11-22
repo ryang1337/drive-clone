@@ -12,7 +12,7 @@ const plex_condensed = IBM_Plex_Sans_Condensed({
 const plex = IBM_Plex_Sans({
   subsets: ["latin"],
   weight: ["400", "700"],
-  variable: "--font-plex-condensed",
+  variable: "--font-plex",
 })
 
 export const metadata: Metadata = {

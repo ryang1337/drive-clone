@@ -8,7 +8,18 @@ const nextConfig = {
         permanent: true,
       }
     ]
-  }
+  },
+  headers: () => [
+    {
+      source: '/folders/:inode_id',
+      headers: [
+        {
+          key: 'Cache-Control',
+          value: 'no-store'
+        }
+      ]
+    }
+  ]
 }
 
 module.exports = nextConfig

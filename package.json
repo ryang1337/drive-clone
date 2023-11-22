@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^1.7.17",
+    "@popperjs/core": "^2.11.8",
     "clsx": "^2.0.0",
     "next": "14.0.2",
     "react": "^18",

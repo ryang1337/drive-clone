@@ -1,30 +1,24 @@
 'use client'
 
 import { Menu, Transition } from "@headlessui/react"
-import { FaPlus } from "react-icons/fa6"
-import { useState, useEffect, useRef } from "react"
+import { FaFolder, FaPlus } from "react-icons/fa6"
+import { useRef } from "react"
+import { useCurrIdStore, useFileChildrenStore, useNewFolderPopupStore } from "../global_state/global_state"
 
-
-const NewFolderPopup = () => {
-  return (
-    <div tabIndex={5} id="new-folder-popup" className="hidden border-8 border-white h-48 w-48 bg-blue-500 fixed top-1/2 left-1/2 w-1/2 transform -translate-x-1/2 -translate-y-1/2">
-      hello
-    </div>
-  )
-}
-
-const NewFolderButton = ({ setIsPopupActive }: { setIsPopupActive: (b: boolean) => void }) => {
+const NewFolderButton = () => {
+  const set_new_folder_active = useNewFolderPopupStore((state) => state.setNewFolderActive)
   return (
     <Menu.Item>
       {({ active }) => (
         <div
-          className={`${active && 'bg-blue-500'}`}
+          className={`flex flex-row ${active && 'bg-blue-500'}`}
           onClick={() => {
             const newFolderPopup = document.getElementById("new-folder-popup")
             newFolderPopup?.classList.remove("hidden")
-            setIsPopupActive(true)
+            set_new_folder_active(true)
           }}
         >
+          <FaFolder className="mt-auto mb-auto mr-3" />
           New Folder
         </div>
       )}
@@ -35,19 +29,22 @@ const NewFolderButton = ({ setIsPopupActive }: { setIsPopupActive: (b: boolean) 
 const UploadFileButton = () => {
   const fileInputRef = useRef<any>(null);
   const formSubmitRef = useRef<any>(null);
+  const add_file = useFileChildrenStore((state) => state.addChild)
+  const curr_id = useCurrIdStore((state) => state.currId)
 
   const submitFile = async () => {
     const fileInput = document.getElementById("file-input")
 
     const formData = new FormData()
     formData.append("file", fileInput.files[0])
-    formData.append("curr_id", "0")
+    formData.append("curr_id", curr_id)
     const res = await fetch("http://localhost:8000/api/uploadfile", {
       method: 'POST',
-      body: formData
+      body: formData,
+      cache: "no-store"
     })
     const new_inode = await res.json()
-    console.log(new_inode)
+    add_file(new_inode)
   }
 
   return (
@@ -79,35 +76,10 @@ const UploadFileButton = () => {
 }
 
 export default function NewDropdown() {
-  const [isPopupActive, _setIsPopupActive] = useState(false);
-  const popupRef = useRef(isPopupActive)
-  const setIsPopupActive = (data: boolean) => {
-    popupRef.current = data;
-    _setIsPopupActive(data);
-  }
-
-
-  const handleOutsideClick = (e: any) => {
-    const newFolderPopup = document.getElementById("new-folder-popup")
-    if (popupRef.current && !newFolderPopup?.contains(e.target)) {
-      newFolderPopup?.classList.add("hidden")
-      setIsPopupActive(false)
-    }
-  }
-
-  useEffect(() => {
-    window.addEventListener("mousedown", handleOutsideClick)
-
-    return () => {
-      window.removeEventListener("mousedown", handleOutsideClick)
-    }
-
-  }, [])
-
   return (
     <div>
       <Menu>
-        {({ open }) => {
+        {() => {
           return (
             <>
               <Menu.Button>
@@ -124,7 +96,7 @@ export default function NewDropdown() {
               >
 
                 <Menu.Items className="z-10 fixed bg-green-500 cursor-pointer">
-                  <NewFolderButton setIsPopupActive={setIsPopupActive} />
+                  <NewFolderButton />
                   <UploadFileButton />
                 </Menu.Items>
               </Transition>
@@ -133,7 +105,6 @@ export default function NewDropdown() {
         }
         }
       </Menu >
-      <NewFolderPopup />
     </div>
   )
 }
