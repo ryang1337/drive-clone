@@ -1,13 +1,17 @@
-from api_objects import INodeCreationObject, INodeMoveObject, INodeDeletionObject, INodeRenameObject
+from api_objects import INodeCreationObject, INodeMoveObject, INodeDeletionObject, INodeRenameObject, UploadFileObject
 
 from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from inode import INode
-from typing import Annotated
+from directory import Directory
+from typing import Annotated, List
 from dotenv import load_dotenv
 
 import boto3
 import os
+
+import jsonpickle
+import json
 
 app = FastAPI(
     version="1.0",
@@ -87,9 +91,12 @@ def put_inode(file_type="", filename="", parent_id="", inode=None):
             )
             DEBUG_INDEX[inode.id] = inode
         else:
-            DEBUG_INDEX[inode.id].file_type = inode.file_type
-            DEBUG_INDEX[inode.id].name = inode.name
-            DEBUG_INDEX[inode.id].parent = inode.parent
+            if inode.id not in DEBUG_INDEX:
+                DEBUG_INDEX[inode.id] = inode
+            else:                
+                DEBUG_INDEX[inode.id].file_type = inode.file_type
+                DEBUG_INDEX[inode.id].name = inode.name
+                DEBUG_INDEX[inode.id].parent = inode.parent
 
         return DEBUG_INDEX[inode.id]
 
@@ -115,7 +122,7 @@ def put_inode(file_type="", filename="", parent_id="", inode=None):
             ":file_type": inode.file_type,
             ":name": inode.name,
             ":parent": inode.parent,
-            ":children": ""
+            ":children": inode.children
         }
     )
 
@@ -188,27 +195,81 @@ def create_directory(obj: INodeCreationObject):
     parent_inode.AddChild(child_inode.id)
     put_inode(inode=parent_inode)
 
-    print(DEBUG_INDEX[parent_inode.id])
-    print(DEBUG_INDEX[child_inode.id])
-
     return child_inode
 
 @app.post("/api/uploadfile")
-def upload_file(file: UploadFile, curr_id: Annotated[str, Form()]):
+def upload_file(files: List[UploadFile], curr_id: Annotated[str, Form()]):
+    inodes = []
+    for file in files:
+        if file.filename == None:
+            print(f"Attempted to upload invalid file in directory {curr_id}")
+            raise HTTPException(status_code=400, detail="Invalid file.")
 
-    if file.filename == None:
-        print(f"Attempted to upload invalid file in directory {curr_id}")
-        raise HTTPException(status_code=400, detail="Invalid file.")
+        inode = put_inode(
+            file_type="file",
+            filename=file.filename,
+            parent_id=curr_id)
+        inodes.append(inode)
 
-    inode = put_inode(
-        file_type="file",
-        filename=file.filename,
-        parent_id=curr_id)
-    if DEBUG:
-        DEBUG_INDEX[inode.id] = inode
-        DEBUG_INDEX[curr_id].AddChild(inode.id)
+        parent_inode = get_inode(curr_id)
+        parent_inode.AddChild(inode.id)
+        put_inode(inode=parent_inode)
+
+        if not DEBUG:
+            s3_bucket.upload_fileobj(file.file, inode.id)
+
+    return inodes
+
+@app.post("/api/uploaddirectory")
+def upload_directory(files: List[UploadFile], filepaths: Annotated[List[str], Form()], curr_id: Annotated[str, Form()]):
+    split_filepaths = [filepath.split('/') for filepath in filepaths]
+    print(split_filepaths)
+    base = Directory(name=split_filepaths[0][0])
+
+    # create the intermediate representation of the folder strucutre
+    # for easier inode creation
+    for i in range(len(split_filepaths)):
+        filepath = split_filepaths[i]
+        curr = base
+        for j in range(1, len(filepath)):
+            # last element in filepath array, so must be the file itself
+            if j == len(filepath) - 1:
+                curr.files.append(i)
+                continue
+
+            directory_name = filepath[j]
+            # if the directory already exists, set curr to be that directory
+            if directory_name in curr.directories:
+                curr = curr.directories[directory_name]
+                continue
+
+            # if directory doesn't exist, create it
+            new_directory = Directory(name=directory_name)
+            curr.directories[directory_name] = new_directory
+            curr = new_directory
+
+    serialized = jsonpickle.encode(base)
+    print(json.dumps(json.loads(serialized), indent=2))
+
+    def recursive_create(curr_directory: Directory, parent_id: str):
+        inode = INode(file_type="directory", name=curr_directory.name, parent=parent_id)
+        for file in curr_directory.files:
+            file_inode = INode(file_type="file", name=split_filepaths[file][-1], parent=inode.id)
+            inode.AddChild(file_inode.id)
+            put_inode(inode=file_inode)
+            if not DEBUG:
+                s3_bucket.upload_fileobj(files[file], filepaths[file][-1])
+            
+        for directory in curr_directory.directories.values():
+            inode.AddChild(recursive_create(directory, inode.id).id)
+
+        put_inode(inode=inode)
         return inode
-    s3_bucket.upload_fileobj(file.file, inode.id)
+
+    new_directory_inode = recursive_create(base, curr_id)
+    parent_inode = get_inode(curr_id)
+    parent_inode.AddChild(new_directory_inode.id)
+    return new_directory_inode
 
 @app.post("/api/renameinode")
 def rename_inode(obj: INodeRenameObject):
@@ -225,11 +286,6 @@ def rename_inode(obj: INodeRenameObject):
     inode.name = obj.new_inode_name
     
     put_inode(inode=inode)
-
-# @app.post("/api/uploaddirectory")
-# def upload_directory(file: UploadFile, curr_id: Annotated[str, Form()]):
-#     id = vfs.InsertFile(curr_id, file.filename, file.file)
-#     return inode_index[id].__dict__
 
 @app.delete("/api/deleteinode/{inode_id}")
 def delete_inode(inode_id: str):
