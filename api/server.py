@@ -4,14 +4,19 @@ from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from inode import INode
 from directory import Directory
-from typing import Annotated, List
 from dotenv import load_dotenv
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import PointStruct
+from pymongo import MongoClient, server_api
+from typing import Annotated, List
 
 import boto3
+import cohere
+import io
+import itertools
 import os
-
-import jsonpickle
-import json
+import PyPDF2
+import ssl
 
 app = FastAPI(
     version="1.0",
@@ -34,8 +39,24 @@ load_dotenv()
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
 DEBUG = True
+DATABASE = "mongodb"
 
-DEBUG_INDEX = {
+MONGODB_CLUSTER = os.getenv("MONGODB_CLUSTER")
+MONGODB_CERTIFICATE_PATH = os.getenv("MONGODB_CERTIFICATE_PATH")
+MONGODB_URI = os.getenv("MONGODB_URI")
+mongo_client = MongoClient(MONGODB_URI,
+                     tls=True,
+                     tlsCertificateKeyFile=MONGODB_CERTIFICATE_PATH,
+                     server_api=server_api.ServerApi('1'))
+qdrant_client= QdrantClient("localhost", port=6333)
+co= cohere.Client('p86EiX52hWt9hHENGUm9NjB1CoEOBC64ZUcluvlh')
+db = mongo_client["drive_clone"]
+mongo_vector_embeddings = db["vector_embeddings"]
+mongo_inode_index = db["inode_index"]
+qdrant_id_gen = itertools.count(start=1)
+mongo_id_gen = itertools.count(start=1)
+
+DEBUG_INODE_INDEX = {
     "0": INode(
         id="0",
         file_type="directory",
@@ -74,39 +95,14 @@ DEBUG_INDEX = {
     )
 }
 
+DEBUG_VECTOR_EMBEDDINGS = {}
+
 s3 = boto3.resource("s3")
 s3_bucket = s3.Bucket(S3_BUCKET_NAME)
 dynamodb = boto3.resource("dynamodb")
 dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
-# creates a new inode if id is not specified, otherwise it will update
-# the dynamodb entry with the given id
-def put_inode(file_type="", filename="", parent_id="", inode=None):
-    if DEBUG:
-        if inode == None:
-            inode = INode(
-                file_type=file_type,
-                name=filename,
-                parent=parent_id,
-            )
-            DEBUG_INDEX[inode.id] = inode
-        else:
-            if inode.id not in DEBUG_INDEX:
-                DEBUG_INDEX[inode.id] = inode
-            else:                
-                DEBUG_INDEX[inode.id].file_type = inode.file_type
-                DEBUG_INDEX[inode.id].name = inode.name
-                DEBUG_INDEX[inode.id].parent = inode.parent
-
-        return DEBUG_INDEX[inode.id]
-
-    if inode == None:
-        inode = INode(
-            file_type=file_type,
-            name=filename,
-            parent=parent_id,
-        )
-
+def put_inode_into_dynamodb(inode):
     key = { 'inode_id': inode.id }
 
     dynamodb_table.update_item(
@@ -126,11 +122,57 @@ def put_inode(file_type="", filename="", parent_id="", inode=None):
         }
     )
 
+def put_inode_into_mongodb(inode):
+    key = {'inode_id': inode.id}
+    new_values = {
+        "$set": {
+            "file_type": inode.file_type,
+            "name": inode.name,
+            "parent": inode.parent,
+            "children": inode.children
+        }
+    }
+
+    mongo_inode_index.update_one(key, new_values, upsert=True)
+
+# creates a new inode if id is not specified, otherwise it will update
+# the dynamodb entry with the given id
+def put_inode(file_type="", filename="", parent_id="", inode=None):
+    if DEBUG:
+        if inode == None:
+            inode = INode(
+                file_type=file_type,
+                name=filename,
+                parent=parent_id,
+            )
+            DEBUG_INODE_INDEX[inode.id] = inode
+        else:
+            if inode.id not in DEBUG_INODE_INDEX:
+                DEBUG_INODE_INDEX[inode.id] = inode
+            else:                
+                DEBUG_INODE_INDEX[inode.id].file_type = inode.file_type
+                DEBUG_INODE_INDEX[inode.id].name = inode.name
+                DEBUG_INODE_INDEX[inode.id].parent = inode.parent
+
+        return DEBUG_INODE_INDEX[inode.id]
+
+    if inode == None:
+        inode = INode(
+            file_type=file_type,
+            name=filename,
+            parent=parent_id,
+        )
+
+    if DATABASE == "dynamodb":
+        put_inode_into_dynamodb(inode)
+    else:
+        put_inode_into_mongodb(inode)
+
     return inode
 
 def get_inode(inode_id):
     if DEBUG:
-        return DEBUG_INDEX[inode_id]
+        return DEBUG_INODE_INDEX[inode_id]
 
     key = { "inode_id": inode_id }
     try:
@@ -149,6 +191,54 @@ def get_inode(inode_id):
         parent=response["Item"]["parent"],
         id=response["Item"]["inode_id"],
         children=response["Item"]["children"]
+    )
+
+def parse_pdf(file):
+    reader = PyPDF2.PdfReader(file)
+    embedding_input = []
+    for page in reader.pages:
+        sentences = page.extract_text().split('.')
+        for sentence in sentences:
+            formatted_sentence = sentence.strip().replace('\n', '').replace('  ', ' ')
+            embedding_input.append(formatted_sentence)
+
+        cluster_size = 5
+        for i in range(0, len(embedding_input), cluster_size):
+            cluster = ""
+            for j in range(cluster_size):
+                if(i + j >= len(embedding_input)):
+                    break
+                cluster += embedding_input[i + j] + ". "
+            
+            embedding_input.append(cluster)
+
+    return embedding_input
+
+def embed_pdf(pdf, inode_id):
+    embeddings = parse_pdf(pdf)
+    response = co.embed(
+        texts=embeddings,
+        model='embed-english-v3.0',
+        input_type='search_document'
+    )
+
+    points = []
+    for (sentence, embedding) in zip(embeddings, response.embeddings):
+        mongo_key = next(mongo_id_gen)
+        if DEBUG:
+            DEBUG_VECTOR_EMBEDDINGS[mongo_key] = {
+                "embedding": embedding,
+                "inode_id": inode_id,
+                "sentence": sentence
+            }
+        else:
+            vector_embeddings.insert_one({"key": mongo_key, "embedding": embedding, "inode_id": inode_id, "sentence": sentence})
+        points.append(PointStruct(id=next(qdrant_id_gen), vector=embedding, payload={"mongo_key": mongo_key}))
+
+    qdrant_client.upsert(
+        collection_name="drive_clone",
+        wait=True,
+        points=points
     )
 
 @app.get("/api/directories/{directory_id}")
@@ -205,6 +295,8 @@ def upload_file(files: List[UploadFile], curr_id: Annotated[str, Form()]):
             print(f"Attempted to upload invalid file in directory {curr_id}")
             raise HTTPException(status_code=400, detail="Invalid file.")
 
+        _, file_extension = os.path.splitext(file.filename)
+
         inode = put_inode(
             file_type="file",
             filename=file.filename,
@@ -217,6 +309,9 @@ def upload_file(files: List[UploadFile], curr_id: Annotated[str, Form()]):
 
         if not DEBUG:
             s3_bucket.upload_fileobj(file.file, inode.id)
+
+        if(file_extension == ".pdf"):
+            embed_pdf(file.file, inode.id)
 
     return inodes
 
@@ -248,9 +343,6 @@ def upload_directory(files: List[UploadFile], filepaths: Annotated[List[str], Fo
             curr.directories[directory_name] = new_directory
             curr = new_directory
 
-    serialized = jsonpickle.encode(base)
-    print(json.dumps(json.loads(serialized), indent=2))
-
     def recursive_create(curr_directory: Directory, parent_id: str):
         inode = INode(file_type="directory", name=curr_directory.name, parent=parent_id)
         for file in curr_directory.files:
@@ -274,7 +366,7 @@ def upload_directory(files: List[UploadFile], filepaths: Annotated[List[str], Fo
 @app.post("/api/renameinode")
 def rename_inode(obj: INodeRenameObject):
     if DEBUG:
-        inode = DEBUG_INDEX[obj.inode_id]
+        inode = DEBUG_INODE_INDEX[obj.inode_id]
         inode.name = obj.new_inode_name
         return
 
@@ -290,10 +382,10 @@ def rename_inode(obj: INodeRenameObject):
 @app.delete("/api/deleteinode/{inode_id}")
 def delete_inode(inode_id: str):
     if DEBUG:
-        inode = DEBUG_INDEX[inode_id]
-        parent = DEBUG_INDEX[inode.parent]
-        DEBUG_INDEX[inode.id].parent = "";
-        DEBUG_INDEX[parent.id].RemoveChild(inode.id);
+        inode = DEBUG_INODE_INDEX[inode_id]
+        parent = DEBUG_INODE_INDEX[inode.parent]
+        DEBUG_INODE_INDEX[inode.id].parent = "";
+        DEBUG_INODE_INDEX[parent.id].RemoveChild(inode.id);
 
         return
 
@@ -317,3 +409,35 @@ def delete_inode(inode_id: str):
 # def move_folder(obj: FolderMoveObject):
 #     vfs.MoveFile(obj.file_id, obj.new_folder_id)
 #     return inode_index[obj.file_id]
+
+@app.get("/api/getthumbnail/{inodeid}")
+def get_thumbnail(inode_id: str):
+    pass    
+
+@app.get("/api/search/{query}")
+def search_files(query: str):
+    query = co.embed(
+        texts = [query],
+        model='embed-english-v3.0',
+        input_type='search_query'
+    )
+
+    search_result = qdrant_client.search(
+        collection_name="drive_clone", query_vector=query.embeddings[0], limit=100
+    )
+
+    inode_ids = set()
+    for res in search_result:
+        mongo_key = res.payload["mongo_key"]
+        if DEBUG:
+            document = DEBUG_VECTOR_EMBEDDINGS[mongo_key]
+        else:
+            document = mongo_vector_embeddings.find_one({"key": mongo_key})
+
+        inode_ids.add(document["inode_id"])
+    
+    results = []
+    for inode_id in inode_ids:
+        results.append(get_inode(inode_id))
+
+    return results

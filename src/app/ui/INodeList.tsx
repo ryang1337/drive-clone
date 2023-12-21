@@ -62,20 +62,34 @@ export default function INodeList({ curr_id, directory_children, file_children }
   const set_directory_children = useDirectoryChildrenStore((state) => state.setChildren)
   const set_file_children = useFileChildrenStore((state) => state.setChildren)
   const set_curr_id = useCurrIdStore((state) => state.setCurrId)
+  const set_selected_inodes = useSelectedINodesStore((state) => state.setINodes)
+
+  const handleDeselectClick = (e: any) => {
+    const inode_list = document.getElementById("inode-list")
+    if (!inode_list?.contains(e.target)) {
+      set_selected_inodes([])
+    }
+  }
 
   useEffect(() => {
     set_directory_children(directory_children)
     set_file_children(file_children)
     set_curr_id(curr_id)
+    window.addEventListener("mousedown", handleDeselectClick)
+
+    return () => {
+      window.removeEventListener("mousedown", handleDeselectClick)
+    }
   }, [])
 
-  const state_directory_children = useDirectoryChildrenStore((state) => state.directoryChildren)
-  const state_file_children = useFileChildrenStore((state) => state.fileChildren)
+  // const state_directory_children = useDirectoryChildrenStore((state) => state.directoryChildren)
+  // const state_file_children = useFileChildrenStore((state) => state.fileChildren)
 
-  const children = state_directory_children.concat(state_file_children)
+  // const children = state_directory_children.concat(state_file_children)
+  const children = directory_children.concat(file_children)
 
   return (
-    <div>
+    <div id="inode-list">
       <ChildInodeList children={children} />
       <Popups />
     </div>

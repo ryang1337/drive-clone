@@ -1,7 +1,8 @@
 'use client'
 
 import { Menu, Transition } from "@headlessui/react"
-import { FaFile, FaFolder, FaPlus } from "react-icons/fa6"
+import { FaFile, FaFolderPlus, FaPlus } from "react-icons/fa6"
+import { MdDriveFolderUpload } from "react-icons/md";
 import { useRef } from "react"
 import { useCurrIdStore, useFileChildrenStore, useNewFolderPopupStore, useDirectoryChildrenStore } from "../global_state/global_state"
 
@@ -18,7 +19,7 @@ const NewFolderButton = () => {
             set_new_folder_active(true)
           }}
         >
-          <FaFolder className="mt-auto mb-auto mr-3" />
+          <FaFolderPlus className="mt-auto mb-auto mr-3" />
           New Folder
         </div>
       )}
@@ -117,7 +118,7 @@ const UploadFolderButton = () => {
             }}
             className={`flex flex-row ${active && 'bg-blue-500'}`}
           >
-            <FaFile className="mt-auto mb-auto mr-3" />
+            <MdDriveFolderUpload className="mt-auto mb-auto mr-3" />
             Upload Folder
           </div>
           <form action={submitFile} ref={formSubmitRef}>
