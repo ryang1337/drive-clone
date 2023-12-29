@@ -2,16 +2,25 @@
 
 import clsx from "clsx"
 import { useRouter } from "next/navigation"
-import { useEffect, } from "react"
+import { useEffect, useState, } from "react"
 import { FaFolder, FaFile, } from "react-icons/fa6"
 
 import INodeModifyDropdown from "@/app/ui/INodeModifyDropdown"
 import Popups from "@/app/ui/Popups/Popups"
 import { INodeType } from "@/app/types"
 import { useCurrIdStore, useDirectoryChildrenStore, useFileChildrenStore, useSelectedINodesStore } from "@/app/global_state/global_state"
+import FileModal from "./Modals/FileModal"
 
 
-const ChildInodeList = ({ children }: { children: Array<INodeType> }) => {
+const ChildInodeList = ({ 
+  children, 
+  set_is_file_modal_open, 
+  set_opened_file 
+}: { 
+  children: Array<INodeType>, 
+  set_is_file_modal_open: (isOpen: boolean) => void, 
+  set_opened_file: (fileName: string) => void 
+}) => {
   const router = useRouter()
   const set_selected_inodes = useSelectedINodesStore((state) => state.setINodes)
   const selected_inodes = useSelectedINodesStore((state) => state.selectedINodes)
@@ -41,7 +50,12 @@ const ChildInodeList = ({ children }: { children: Array<INodeType> }) => {
             console.log()
           }}
           onDoubleClick={() => {
-            router.push(pathname)
+            if(child.file_type == "directory") {
+              router.push(pathname)
+            }else{
+              set_is_file_modal_open(true)
+              set_opened_file(child.id)
+            }
           }}
         >
           <div className="flex flex-row space-x-4">
@@ -63,6 +77,8 @@ export default function INodeList({ curr_id, directory_children, file_children }
   const set_file_children = useFileChildrenStore((state) => state.setChildren)
   const set_curr_id = useCurrIdStore((state) => state.setCurrId)
   const set_selected_inodes = useSelectedINodesStore((state) => state.setINodes)
+  const [is_file_modal_open, set_is_file_modal_open] = useState(false)
+  const [opened_file, set_opened_file] = useState("")
 
   const handleDeselectClick = (e: any) => {
     const inode_list = document.getElementById("inode-list")
@@ -80,18 +96,19 @@ export default function INodeList({ curr_id, directory_children, file_children }
     return () => {
       window.removeEventListener("mousedown", handleDeselectClick)
     }
-  }, [])
+  }, [directory_children, file_children])
 
-  // const state_directory_children = useDirectoryChildrenStore((state) => state.directoryChildren)
-  // const state_file_children = useFileChildrenStore((state) => state.fileChildren)
+  const state_directory_children = useDirectoryChildrenStore((state) => state.directoryChildren)
+  const state_file_children = useFileChildrenStore((state) => state.fileChildren)
 
-  // const children = state_directory_children.concat(state_file_children)
-  const children = directory_children.concat(file_children)
+  const children = state_directory_children.concat(state_file_children)
+  // const children = directory_children.concat(file_children)
 
   return (
     <div id="inode-list">
-      <ChildInodeList children={children} />
+      <ChildInodeList children={children} set_is_file_modal_open={set_is_file_modal_open} set_opened_file={set_opened_file}/>
       <Popups />
+      <FileModal is_open={is_file_modal_open} inode_id={opened_file}/>
     </div>
   )
 }

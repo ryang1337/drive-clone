@@ -14,6 +14,9 @@ const SearchBar = ({ defaultValue } : {defaultValue: string}) => {
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         // Perform search logic here using the searchTerm state
+        if (searchTerm === '') {
+            return;
+        }
         router.push(`/search?q=${searchTerm}`)
     };
 

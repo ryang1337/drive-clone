@@ -21,7 +21,8 @@ const SearchPage = () => {
         }
 
         fetchData()
-    }, [])
+    }, [query])
+
     return (
         <div>
             <BackButton parent_inode_id="0" />

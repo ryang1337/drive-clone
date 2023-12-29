@@ -27,7 +27,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${plex_condensed.variable} ${plex.variable}`}>
-      <body>{children}</body>
+      <body className="overscroll-none">{children}</body>
     </html>
   )
 }

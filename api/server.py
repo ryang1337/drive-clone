@@ -15,7 +15,7 @@ import cohere
 import io
 import itertools
 import os
-import PyPDF2
+import pdftotext
 import ssl
 
 app = FastAPI(
@@ -49,12 +49,17 @@ mongo_client = MongoClient(MONGODB_URI,
                      tlsCertificateKeyFile=MONGODB_CERTIFICATE_PATH,
                      server_api=server_api.ServerApi('1'))
 qdrant_client= QdrantClient("localhost", port=6333)
-co= cohere.Client('p86EiX52hWt9hHENGUm9NjB1CoEOBC64ZUcluvlh')
+co = cohere.Client('p86EiX52hWt9hHENGUm9NjB1CoEOBC64ZUcluvlh')
 db = mongo_client["drive_clone"]
 mongo_vector_embeddings = db["vector_embeddings"]
 mongo_inode_index = db["inode_index"]
 qdrant_id_gen = itertools.count(start=1)
 mongo_id_gen = itertools.count(start=1)
+
+s3 = boto3.resource("s3")
+s3_bucket = s3.Bucket(S3_BUCKET_NAME)
+dynamodb = boto3.resource("dynamodb")
+dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
 DEBUG_INODE_INDEX = {
     "0": INode(
@@ -70,7 +75,7 @@ DEBUG_INODE_INDEX = {
         file_type="directory",
         name="folder1",
         parent="0",
-        children="3,4"
+        children="3,4,5"
     ),
     "2": INode(
         id="2",
@@ -92,15 +97,17 @@ DEBUG_INODE_INDEX = {
         name="folder3",
         parent="1",
         children=""
-    )
+    ),
+    "5": INode(
+        id="5",
+        file_type="file",
+        name="file2",
+        parent="1",
+        children=""
+    ),
 }
 
 DEBUG_VECTOR_EMBEDDINGS = {}
-
-s3 = boto3.resource("s3")
-s3_bucket = s3.Bucket(S3_BUCKET_NAME)
-dynamodb = boto3.resource("dynamodb")
-dynamodb_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
 
 def put_inode_into_dynamodb(inode):
     key = { 'inode_id': inode.id }
@@ -194,14 +201,34 @@ def get_inode(inode_id):
     )
 
 def parse_pdf(file):
-    reader = PyPDF2.PdfReader(file)
+    # pyPDF2's parsing isn't the greatest
+    # reader = PyPDF2.PdfReader(file)
+    # embedding_input = []
+    # for page in reader.pages:
+    #     sentences = page.extract_text().split('.')
+    #     for sentence in sentences:
+    #         formatted_sentence = sentence.strip().replace('\n', '').replace('  ', ' ')
+    #         embedding_input.append(formatted_sentence)
+
+    #     cluster_size = 5
+    #     for i in range(0, len(embedding_input), cluster_size):
+    #         cluster = ""
+    #         for j in range(cluster_size):
+    #             if(i + j >= len(embedding_input)):
+    #                 break
+    #             cluster += embedding_input[i + j] + ". "
+            
+    #         embedding_input.append(cluster)
+
+    # return embedding_input
+    pdf = pdftotext.PDF(file)
     embedding_input = []
-    for page in reader.pages:
-        sentences = page.extract_text().split('.')
+    for page in pdf:
+        sentences = page.split('. ')
         for sentence in sentences:
             formatted_sentence = sentence.strip().replace('\n', '').replace('  ', ' ')
             embedding_input.append(formatted_sentence)
-
+            
         cluster_size = 5
         for i in range(0, len(embedding_input), cluster_size):
             cluster = ""
@@ -211,7 +238,7 @@ def parse_pdf(file):
                 cluster += embedding_input[i + j] + ". "
             
             embedding_input.append(cluster)
-
+    
     return embedding_input
 
 def embed_pdf(pdf, inode_id):
@@ -384,8 +411,10 @@ def delete_inode(inode_id: str):
     if DEBUG:
         inode = DEBUG_INODE_INDEX[inode_id]
         parent = DEBUG_INODE_INDEX[inode.parent]
-        DEBUG_INODE_INDEX[inode.id].parent = "";
-        DEBUG_INODE_INDEX[parent.id].RemoveChild(inode.id);
+        DEBUG_INODE_INDEX[inode.id].parent = ""
+        DEBUG_INODE_INDEX[parent.id].RemoveChild(inode.id)
+
+        DEBUG_VECTOR_EMBEDDINGS = {k: v for k, v in DEBUG_VECTOR_EMBEDDINGS.items() if v["inode_id"] != inode_id}
 
         return
 
@@ -404,15 +433,37 @@ def delete_inode(inode_id: str):
 
     put_inode(inode=inode)
     put_inode(inode=parent_inode)
+    
+    if DATABASE == "mongodb":
+        mongo_vector_embeddings.delete_many({"inode_id": inode_id})
 
 # @app.put("/api/movefile")
 # def move_folder(obj: FolderMoveObject):
 #     vfs.MoveFile(obj.file_id, obj.new_folder_id)
 #     return inode_index[obj.file_id]
 
-@app.get("/api/getthumbnail/{inodeid}")
-def get_thumbnail(inode_id: str):
-    pass    
+@app.get("/api/gets3file/{inode_id}")
+def get_s3_file_url(inode_id: str):
+    try:
+        inode = get_inode(inode_id)
+    except HTTPException:
+        raise
+
+    if inode.file_type != "file":
+        raise HTTPException(status_code=404, detail="File does not exist.")
+
+    url = s3_bucket.meta.client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": S3_BUCKET_NAME,
+            "Key": inode.id
+        },
+        ExpiresIn=300
+    )
+
+    return {
+        "url": url
+    }
 
 @app.get("/api/search/{query}")
 def search_files(query: str):
@@ -423,7 +474,10 @@ def search_files(query: str):
     )
 
     search_result = qdrant_client.search(
-        collection_name="drive_clone", query_vector=query.embeddings[0], limit=100
+        collection_name="drive_clone",
+        query_vector=query.embeddings[0],
+        limit=100,
+        score_threshold=0.4
     )
 
     inode_ids = set()

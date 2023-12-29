@@ -16,7 +16,7 @@ export default async function Home({ params }: { params: { inode_id: string } })
     <div>
       <BackButton parent_inode_id={parent_inode_id} />
       <NewDropdown />
-      <SearchBar />
+      <SearchBar defaultValue=""/>
       <INodeList curr_id={params.inode_id} directory_children={directory_children} file_children={file_children} />
     </div>
   )
