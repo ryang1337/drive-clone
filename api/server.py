@@ -38,10 +38,10 @@ app.add_middleware(
 load_dotenv()
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 DEBUG = True
 DATABASE = "mongodb"
 
-MONGODB_CLUSTER = os.getenv("MONGODB_CLUSTER")
 MONGODB_CERTIFICATE_PATH = os.getenv("MONGODB_CERTIFICATE_PATH")
 MONGODB_URI = os.getenv("MONGODB_URI")
 mongo_client = MongoClient(MONGODB_URI,
@@ -49,7 +49,7 @@ mongo_client = MongoClient(MONGODB_URI,
                      tlsCertificateKeyFile=MONGODB_CERTIFICATE_PATH,
                      server_api=server_api.ServerApi('1'))
 qdrant_client= QdrantClient("localhost", port=6333)
-co = cohere.Client('p86EiX52hWt9hHENGUm9NjB1CoEOBC64ZUcluvlh')
+co = cohere.Client(COHERE_API_KEY)
 db = mongo_client["drive_clone"]
 mongo_vector_embeddings = db["vector_embeddings"]
 mongo_inode_index = db["inode_index"]

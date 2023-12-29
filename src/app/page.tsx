@@ -1,13 +1,11 @@
-'use client'
+"use client";
 
-import { usePathname } from "next/navigation"
+import { usePathname } from "next/navigation";
 
 export default function Home() {
   const pathname = usePathname();
 
-  console.log(pathname.length)
+  console.log(pathname.length);
 
-  return (
-    <div>{pathname}</div>
-  )
+  return <div>{pathname}</div>;
 }
