@@ -37,3 +37,8 @@ next-env.d.ts
 
 #pycache
 **/__pycache__
+
+/api/*.pdf
+/api/test*.py
+/api/.env
+/qdrant_storage
